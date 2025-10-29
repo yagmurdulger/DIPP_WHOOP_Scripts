@@ -45,10 +45,10 @@ Hello, World!
 ```
 
 ### 5) Add your own code
-- Put reusable modules in `src/your_project/`
+- Put reusable modules in `src/`
 - Put runnable utilities/scripts in `scripts/`
 
-To import from `src/your_project` in your scripts, use the `PYTHONPATH` approach when needed:
+To import from modules in `src/` in your scripts, use the `PYTHONPATH` approach when needed:
 ```bash
 PYTHONPATH=src python scripts/hello.py
 ```
@@ -64,10 +64,12 @@ DIPP_WHOOP_Scripts/
 ├─ requirements.txt
 ├─ .gitignore
 ├─ src/
-│  └─ your_project/
-│     └─ __init__.py
+│  ├─ __init__.py
+│  ├─ constants.py
+│  └─ secret_store.py
 └─ scripts/
-   └─ hello.py
+   ├─ hello.py
+   └─ whoop_auth.py
 ```
 
 ## Common Commands
@@ -89,6 +91,20 @@ Prerequisites:
 - Register an app in the WHOOP Developer Dashboard and add a Redirect URL of `http://localhost:8765/callback`.
 - Ensure your app requests the `offline` scope to receive a refresh token.
 
+Configuration files:
+- `src/constants.py`: static config like URLs, redirect URI, scope.
+- `secrets.json`: stores `client_id`, `client_secret`, `access_token`, `refresh_token`. This file is ignored by git.
+
+Set your client credentials in `secrets.json` (auto-created on first run if missing):
+```json
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "access_token": "",
+  "refresh_token": ""
+}
+```
+
 Install dependency (if not already):
 ```bash
 pip install -r requirements.txt
@@ -96,13 +112,7 @@ pip install -r requirements.txt
 
 Run the CLI:
 ```bash
-python scripts/whoop_auth.py \
-  --client-id CLIENT_ID \
-  --client-secret CLIENT_SECRET \
-  --scope "offline" \
-  --authorization-url https://api.prod.whoop.com/oauth/oauth2/auth \
-  --access-token-url https://api.prod.whoop.com/oauth/oauth2/token \
-  --redirect-uri http://localhost:8765/callback
+python scripts/whoop_auth.py
 ```
 
-The script will open a browser window to WHOOP's authorization screen, receive the redirect locally, verify the state, and print a JSON object containing `access_token`, `refresh_token`, `expires_in`, and `token_type`.
+The script will open a browser window to WHOOP's authorization screen, receive the redirect locally, verify the state, and print a JSON object containing `access_token`, `refresh_token`, `expires_in`, and `token_type`. It will also write `access_token` and `refresh_token` back into `secrets.json` automatically.

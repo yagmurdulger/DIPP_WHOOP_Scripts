@@ -28,3 +28,6 @@ htmlcov/
 
 # macOS
 .DS_Store
+
+# Secrets
+secrets.json
