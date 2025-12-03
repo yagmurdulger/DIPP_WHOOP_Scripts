@@ -1,4 +1,5 @@
 AUTHORIZATION_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 ACCESS_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
+API_BASE_URL = "https://api.prod.whoop.com"
 REDIRECT_URI = "http://localhost:8765/callback"
-SCOPE = "offline"
+SCOPE = "offline read:recovery read:sleep read:cycles read:workout read:profile read:body_measurement"
