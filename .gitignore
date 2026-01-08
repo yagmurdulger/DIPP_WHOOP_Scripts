@@ -31,3 +31,6 @@ htmlcov/
 
 # Secrets
 secrets.json
+
+# Test output
+output_test.txt

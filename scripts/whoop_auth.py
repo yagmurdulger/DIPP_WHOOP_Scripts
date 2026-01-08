@@ -20,7 +20,14 @@ if SRC_DIR not in sys.path:
 import requests
 
 from constants import AUTHORIZATION_URL, ACCESS_TOKEN_URL, API_BASE_URL, REDIRECT_URI, SCOPE
-from secret_store import load_secrets, save_secrets
+from secret_store import (
+    load_secrets,
+    save_secrets,
+    get_client_credentials,
+    get_band_tokens,
+    save_band_tokens,
+    NUM_BANDS,
+)
 
 
 DEFAULT_AUTH_URL = AUTHORIZATION_URL
@@ -331,7 +338,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "WHOOP API OAuth and data retrieval tool. "
-            "Run OAuth flow or fetch data (sleep, cycle, recovery) from WHOOP API."
+            "Run OAuth flow or fetch data (sleep, cycle, recovery) from WHOOP API. "
+            "Supports multiple bands (1-10) with separate tokens for each."
         )
     )
     parser.add_argument(
@@ -339,6 +347,14 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         choices=["get_sleep", "get_cycle", "get_recovery"],
         help="Command to execute (default: run OAuth flow)",
+    )
+    parser.add_argument(
+        "--band",
+        type=int,
+        required=True,
+        choices=range(1, NUM_BANDS + 1),
+        metavar=f"{{1-{NUM_BANDS}}}",
+        help=f"Band number to authenticate or fetch data for (1-{NUM_BANDS})",
     )
     parser.add_argument(
         "--no-browser",
@@ -359,17 +375,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_oauth_flow(no_browser: bool = False) -> None:
-    """Run the OAuth 2.0 authorization flow."""
+def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
+    """Run the OAuth 2.0 authorization flow for a specific band.
+    
+    Args:
+        band_id: Band number (1-10) to authenticate
+        no_browser: If True, don't auto-open browser
+    """
     # Load constants and secrets
     scope = SCOPE
     authorization_url = DEFAULT_AUTH_URL
     token_url = DEFAULT_TOKEN_URL
     redirect_uri_cfg = DEFAULT_REDIRECT_URI
 
-    secrets_obj = load_secrets()
-    client_id = secrets_obj.get("client_id") or ""
-    client_secret = secrets_obj.get("client_secret") or ""
+    client_id, client_secret = get_client_credentials()
 
     if not client_id or not client_secret:
         raise SystemExit(
@@ -394,6 +413,7 @@ def run_oauth_flow(no_browser: bool = False) -> None:
         state=state,
     )
 
+    print(f"Authenticating band {band_id}...")
     print("Opening WHOOP authorization URL...")
     print(auth_url)
     if not no_browser:
@@ -427,14 +447,14 @@ def run_oauth_flow(no_browser: bool = False) -> None:
         redirect_uri=redirect_uri,
     )
 
-    # Update secrets with the new tokens
+    # Update secrets with the new tokens for this band
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
-    if isinstance(access_token, str):
-        secrets_obj["access_token"] = access_token
-    if isinstance(refresh_token, str):
-        secrets_obj["refresh_token"] = refresh_token
-    save_secrets(secrets_obj)
+    if isinstance(access_token, str) and isinstance(refresh_token, str):
+        save_band_tokens(band_id, access_token, refresh_token)
+        print(f"Tokens saved for band {band_id}")
+    else:
+        raise SystemExit("Failed to get valid tokens from OAuth flow")
 
     # Print tokens as JSON to stdout
     print(json.dumps(tokens, indent=2))
@@ -559,6 +579,7 @@ def _fetch_all_pages(
 
 def run_get_data(
     data_fetcher,
+    band_id: int,
     limit: int = 25,
     fetch_all: bool = False,
 ) -> None:
@@ -566,16 +587,14 @@ def run_get_data(
     
     Args:
         data_fetcher: Function that fetches data (get_sleep_data, get_cycle_data, etc.)
+        band_id: Band number (1-10) to fetch data for
         limit: Maximum number of records per page
         fetch_all: If True, fetch all pages using pagination
     """
     token_url = DEFAULT_TOKEN_URL
     
-    secrets_obj = load_secrets()
-    client_id = secrets_obj.get("client_id") or ""
-    client_secret = secrets_obj.get("client_secret") or ""
-    access_token = secrets_obj.get("access_token") or ""
-    refresh_token = secrets_obj.get("refresh_token") or ""
+    client_id, client_secret = get_client_credentials()
+    access_token, refresh_token = get_band_tokens(band_id)
 
     if not client_id or not client_secret:
         raise SystemExit(
@@ -584,13 +603,15 @@ def run_get_data(
 
     if not access_token:
         raise SystemExit(
-            "access_token missing in secrets.json. Please run OAuth flow first."
+            f"access_token missing for band {band_id} in secrets.json. Please run OAuth flow first."
         )
 
     if not refresh_token:
         raise SystemExit(
-            "refresh_token missing in secrets.json. Please run OAuth flow first."
+            f"refresh_token missing for band {band_id} in secrets.json. Please run OAuth flow first."
         )
+
+    print(f"Fetching data for band {band_id}...", file=sys.stderr)
 
     # Fetch data (will auto-refresh token if expired)
     if fetch_all:
@@ -615,10 +636,8 @@ def run_get_data(
 
     # Update secrets if tokens were refreshed
     if new_access_token != access_token or new_refresh_token != refresh_token:
-        secrets_obj["access_token"] = new_access_token
-        secrets_obj["refresh_token"] = new_refresh_token
-        save_secrets(secrets_obj)
-        print("Tokens refreshed and saved to secrets.json")
+        save_band_tokens(band_id, new_access_token, new_refresh_token)
+        print(f"Tokens refreshed and saved for band {band_id}", file=sys.stderr)
 
     # Print data as JSON to stdout
     print(json.dumps(data, indent=2))
@@ -628,14 +647,14 @@ def main() -> None:
     args = parse_args()
 
     if args.command == "get_sleep":
-        run_get_data(get_sleep_data, limit=args.limit, fetch_all=args.all)
+        run_get_data(get_sleep_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
     elif args.command == "get_cycle":
-        run_get_data(get_cycle_data, limit=args.limit, fetch_all=args.all)
+        run_get_data(get_cycle_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
     elif args.command == "get_recovery":
-        run_get_data(get_recovery_data, limit=args.limit, fetch_all=args.all)
+        run_get_data(get_recovery_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
     else:
         # Default: run OAuth flow
-        run_oauth_flow(no_browser=args.no_browser)
+        run_oauth_flow(band_id=args.band, no_browser=args.no_browser)
 
 
 if __name__ == "__main__":
