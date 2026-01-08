@@ -5,7 +5,7 @@ import secrets
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import os
 import sys
@@ -235,6 +235,7 @@ def get_sleep_data(
     access_token: str,
     refresh_token: str,
     limit: int = 25,
+    next_token: Optional[str] = None,
 ) -> Tuple[Dict[str, object], str, str]:
     """Fetch sleep data from WHOOP API with automatic token refresh.
     
@@ -243,6 +244,8 @@ def get_sleep_data(
     """
     url = f"{API_BASE_URL}/developer/v2/activity/sleep"
     params = {"limit": limit}
+    if next_token:
+        params["nextToken"] = next_token
     
     response, new_access_token, new_refresh_token = authenticated_request(
         method="GET",
@@ -258,18 +261,83 @@ def get_sleep_data(
     return response.json(), new_access_token, new_refresh_token
 
 
+def get_cycle_data(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    access_token: str,
+    refresh_token: str,
+    limit: int = 25,
+    next_token: Optional[str] = None,
+) -> Tuple[Dict[str, object], str, str]:
+    """Fetch cycle data from WHOOP API with automatic token refresh.
+    
+    Returns:
+        Tuple of (cycle_data, access_token, refresh_token) - tokens may be updated if refreshed
+    """
+    url = f"{API_BASE_URL}/developer/v2/cycle"
+    params = {"limit": limit}
+    if next_token:
+        params["nextToken"] = next_token
+    
+    response, new_access_token, new_refresh_token = authenticated_request(
+        method="GET",
+        url=url,
+        token_url=token_url,
+        client_id=client_id,
+        client_secret=client_secret,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        params=params,
+    )
+    
+    return response.json(), new_access_token, new_refresh_token
+
+
+def get_recovery_data(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    access_token: str,
+    refresh_token: str,
+    limit: int = 25,
+    next_token: Optional[str] = None,
+) -> Tuple[Dict[str, object], str, str]:
+    """Fetch recovery data from WHOOP API with automatic token refresh.
+    
+    Returns:
+        Tuple of (recovery_data, access_token, refresh_token) - tokens may be updated if refreshed
+    """
+    url = f"{API_BASE_URL}/developer/v2/recovery"
+    params = {"limit": limit}
+    if next_token:
+        params["nextToken"] = next_token
+    
+    response, new_access_token, new_refresh_token = authenticated_request(
+        method="GET",
+        url=url,
+        token_url=token_url,
+        client_id=client_id,
+        client_secret=client_secret,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        params=params,
+    )
+    
+    return response.json(), new_access_token, new_refresh_token
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "WHOOP API OAuth and data retrieval tool. "
-            "Run OAuth flow or fetch sleep data from WHOOP API."
+            "Run OAuth flow or fetch data (sleep, cycle, recovery) from WHOOP API."
         )
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["get_sleep"],
+        choices=["get_sleep", "get_cycle", "get_recovery"],
         help="Command to execute (default: run OAuth flow)",
     )
     parser.add_argument(
@@ -281,7 +349,12 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=25,
-        help="Maximum number of sleep records to fetch (default: 25, max: 25)",
+        help="Maximum number of records per page (default: 25, max: 25)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch all pages of data (uses pagination with next_token)",
     )
     return parser.parse_args()
 
@@ -367,8 +440,135 @@ def run_oauth_flow(no_browser: bool = False) -> None:
     print(json.dumps(tokens, indent=2))
 
 
-def run_get_sleep(limit: int = 25) -> None:
-    """Fetch sleep data from WHOOP API with automatic token refresh."""
+def _fetch_all_pages(
+    data_fetcher,
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    access_token: str,
+    refresh_token: str,
+    limit: int = 25,
+) -> Tuple[Dict[str, object], str, str]:
+    """Fetch all pages of data using pagination.
+    
+    Returns:
+        Tuple of (combined_data, access_token, refresh_token) - all records combined
+    """
+    all_records: List[object] = []
+    current_token = access_token
+    current_refresh = refresh_token
+    next_token: Optional[str] = None
+    previous_next_token: Optional[str] = None
+    seen_next_tokens: set = set()
+    page_count = 0
+    response_metadata: Dict[str, object] = {}
+    
+    while True:
+        page_count += 1
+        records_before = len(all_records)
+        
+        if next_token:
+            print(f"Fetching page {page_count} with next_token: {next_token[:30]}...", file=sys.stderr)
+        else:
+            print(f"Fetching page {page_count} (first page, no next_token)...", file=sys.stderr)
+        
+        # Fetch the page
+        page_data, current_token, current_refresh = data_fetcher(
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            access_token=current_token,
+            refresh_token=current_refresh,
+            limit=limit,
+            next_token=next_token,
+        )
+        
+        # Debug: print response keys to help diagnose issues
+        if page_count == 1:
+            print(f"  Response keys: {list(page_data.keys()) if isinstance(page_data, dict) else 'Not a dict'}", file=sys.stderr)
+        
+        # Preserve metadata from first page (excluding records and next_token)
+        if page_count == 1 and isinstance(page_data, dict):
+            for key, value in page_data.items():
+                if key not in ("records", "next_token"):
+                    response_metadata[key] = value
+        
+        # Extract records from the response (structure may vary by endpoint)
+        # Most WHOOP endpoints return records in a 'records' key
+        page_records: List[object] = []
+        if isinstance(page_data, dict) and "records" in page_data:
+            page_records = page_data["records"] if isinstance(page_data["records"], list) else []
+            all_records.extend(page_records)
+        elif isinstance(page_data, list):
+            page_records = page_data
+            all_records.extend(page_records)
+        else:
+            # If structure is different, add the whole page
+            all_records.append(page_data)
+        
+        records_after = len(all_records)
+        new_records_count = records_after - records_before
+        print(f"  Page {page_count}: fetched {new_records_count} records (total: {records_after})", file=sys.stderr)
+        
+        # Extract next_token from response
+        previous_next_token = next_token
+        if isinstance(page_data, dict):
+            next_token = page_data.get("next_token")
+            if next_token and not isinstance(next_token, str):
+                next_token = str(next_token)
+        else:
+            next_token = None
+        
+        # # Debug output
+        # if next_token:
+        #     print(f"  Found next_token for page {page_count}: {next_token[:20]}... (will fetch next page)", file=sys.stderr)
+        # else:
+        #     print(f"  No next_token found for page {page_count}, pagination complete.", file=sys.stderr)
+        
+        # Break if no next_token (None, empty string, or falsy value)
+        if not next_token or (isinstance(next_token, str) and not next_token.strip()):
+            break
+        
+        # # Safety check: break if we got the same next_token twice (infinite loop protection)
+        # if next_token == previous_next_token:
+        #     print(f"  Warning: Same next_token returned twice, breaking to prevent infinite loop.", file=sys.stderr)
+        #     break
+        
+        # # Safety check: break if we've seen this next_token before (circular pagination)
+        # if next_token in seen_next_tokens:
+        #     print(f"  Warning: next_token was seen before, breaking to prevent infinite loop.", file=sys.stderr)
+        #     break
+        # seen_next_tokens.add(next_token)
+        
+        # # Safety check: break if no new records were fetched (API might be returning same page)
+        # if new_records_count == 0:
+        #     print(f"  Warning: No new records fetched on page {page_count}, breaking to prevent infinite loop.", file=sys.stderr)
+        #     break
+    
+    print(f"Fetched {page_count} page(s) with {len(all_records)} total records.", file=sys.stderr)
+    
+    # Return combined data in the same structure as a single page
+    combined_data: Dict[str, object] = {
+        **response_metadata,
+        "records": all_records,
+        "next_token": None,  # No more pages
+    }
+    
+    return combined_data, current_token, current_refresh
+
+
+def run_get_data(
+    data_fetcher,
+    limit: int = 25,
+    fetch_all: bool = False,
+) -> None:
+    """Generic helper to fetch data from WHOOP API with automatic token refresh.
+    
+    Args:
+        data_fetcher: Function that fetches data (get_sleep_data, get_cycle_data, etc.)
+        limit: Maximum number of records per page
+        fetch_all: If True, fetch all pages using pagination
+    """
     token_url = DEFAULT_TOKEN_URL
     
     secrets_obj = load_secrets()
@@ -392,15 +592,26 @@ def run_get_sleep(limit: int = 25) -> None:
             "refresh_token missing in secrets.json. Please run OAuth flow first."
         )
 
-    # Fetch sleep data (will auto-refresh token if expired)
-    sleep_data, new_access_token, new_refresh_token = get_sleep_data(
-        token_url=token_url,
-        client_id=client_id,
-        client_secret=client_secret,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        limit=limit,
-    )
+    # Fetch data (will auto-refresh token if expired)
+    if fetch_all:
+        data, new_access_token, new_refresh_token = _fetch_all_pages(
+            data_fetcher=data_fetcher,
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            limit=limit,
+        )
+    else:
+        data, new_access_token, new_refresh_token = data_fetcher(
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            limit=limit,
+        )
 
     # Update secrets if tokens were refreshed
     if new_access_token != access_token or new_refresh_token != refresh_token:
@@ -409,15 +620,19 @@ def run_get_sleep(limit: int = 25) -> None:
         save_secrets(secrets_obj)
         print("Tokens refreshed and saved to secrets.json")
 
-    # Print sleep data as JSON to stdout
-    print(json.dumps(sleep_data, indent=2))
+    # Print data as JSON to stdout
+    print(json.dumps(data, indent=2))
 
 
 def main() -> None:
     args = parse_args()
 
     if args.command == "get_sleep":
-        run_get_sleep(limit=args.limit)
+        run_get_data(get_sleep_data, limit=args.limit, fetch_all=args.all)
+    elif args.command == "get_cycle":
+        run_get_data(get_cycle_data, limit=args.limit, fetch_all=args.all)
+    elif args.command == "get_recovery":
+        run_get_data(get_recovery_data, limit=args.limit, fetch_all=args.all)
     else:
         # Default: run OAuth flow
         run_oauth_flow(no_browser=args.no_browser)
