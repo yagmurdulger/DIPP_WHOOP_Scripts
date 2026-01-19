@@ -4,6 +4,7 @@ import json
 import secrets
 import urllib.parse
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, List, Optional, Tuple
 
@@ -417,6 +418,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_date_format(date_str: str) -> bool:
+    """Validate that a date string is in YYYY-MM-DD format.
+    
+    Args:
+        date_str: Date string to validate
+    
+    Returns:
+        True if valid, False otherwise
+    """
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
 def format_date_for_api(date_str: Optional[str], is_end: bool = False) -> Optional[str]:
     """Format a YYYY-MM-DD date string to ISO 8601 format for WHOOP API.
     
@@ -426,6 +443,9 @@ def format_date_for_api(date_str: Optional[str], is_end: bool = False) -> Option
     
     Returns:
         ISO 8601 formatted date-time string, or None if input is None
+    
+    Raises:
+        SystemExit: If date string is not in valid YYYY-MM-DD format
     """
     if not date_str:
         return None
@@ -433,6 +453,12 @@ def format_date_for_api(date_str: Optional[str], is_end: bool = False) -> Option
     # If already in full ISO format, return as-is
     if "T" in date_str:
         return date_str
+    
+    # Validate YYYY-MM-DD format
+    if not validate_date_format(date_str):
+        raise SystemExit(
+            f"Invalid date format: '{date_str}'. Please use YYYY-MM-DD format (e.g., 2024-01-15)."
+        )
     
     # Append time portion based on whether it's start or end
     if is_end:
