@@ -157,11 +157,44 @@ python scripts/whoop_auth.py get_recovery --band 3
 python scripts/whoop_auth.py get_recovery --band 3 --all
 ```
 
+### Date Range Filtering
+
+You can filter data by date range using `--start` and `--end` arguments. Simply provide dates in `YYYY-MM-DD` format.
+
+- `--start`: Returns records from the **beginning** of this day (00:00:00)
+- `--end`: Returns records until the **end** of this day (23:59:59)
+
+Both arguments are optional and can be used independently or together.
+
+**Examples:**
+
+```bash
+# Fetch sleep data for January 2024
+python scripts/whoop_auth.py get_sleep --band 1 --start 2024-01-01 --end 2024-01-31
+
+# Fetch all cycle data for Q1 2024
+python scripts/whoop_auth.py get_cycle --band 2 --all --start 2024-01-01 --end 2024-03-31
+
+# Fetch recovery data from June 1st onwards (no end date)
+python scripts/whoop_auth.py get_recovery --band 3 --start 2024-06-01
+
+# Fetch sleep data up to end of 2024 (no start date)
+python scripts/whoop_auth.py get_sleep --band 1 --all --end 2024-12-31
+
+# Fetch all sleep data for a single day
+python scripts/whoop_auth.py get_sleep --band 1 --start 2024-07-15 --end 2024-07-15
+
+# Combine with pagination
+python scripts/whoop_auth.py get_sleep --band 1 --all --limit 25 --start 2024-01-01 --end 2024-06-30
+```
+
 ### Options
 
 - `--band {1-10}`: **(Required)** Band number to authenticate or fetch data for
 - `--no-browser`: Don't auto-open browser; print URL instead (OAuth flow only)
 - `--limit N`: Maximum records per page (default: 25, max: 25)
 - `--all`: Fetch all pages of data using pagination
+- `--start YYYY-MM-DD`: Start date for filtering (returns records from beginning of this day)
+- `--end YYYY-MM-DD`: End date for filtering (returns records until end of this day)
 
 The script will open a browser window to WHOOP's authorization screen, receive the redirect locally, verify the state, and print a JSON object containing `access_token`, `refresh_token`, `expires_in`, and `token_type`. It will save tokens to the appropriate band entry in `secrets.json` automatically.

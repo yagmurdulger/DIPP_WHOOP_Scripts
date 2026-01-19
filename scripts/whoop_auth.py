@@ -243,8 +243,14 @@ def get_sleep_data(
     refresh_token: str,
     limit: int = 25,
     next_token: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> Tuple[Dict[str, object], str, str]:
     """Fetch sleep data from WHOOP API with automatic token refresh.
+    
+    Args:
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
     
     Returns:
         Tuple of (sleep_data, access_token, refresh_token) - tokens may be updated if refreshed
@@ -253,6 +259,10 @@ def get_sleep_data(
     params = {"limit": limit}
     if next_token:
         params["nextToken"] = next_token
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
     
     response, new_access_token, new_refresh_token = authenticated_request(
         method="GET",
@@ -276,8 +286,14 @@ def get_cycle_data(
     refresh_token: str,
     limit: int = 25,
     next_token: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> Tuple[Dict[str, object], str, str]:
     """Fetch cycle data from WHOOP API with automatic token refresh.
+    
+    Args:
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
     
     Returns:
         Tuple of (cycle_data, access_token, refresh_token) - tokens may be updated if refreshed
@@ -286,6 +302,10 @@ def get_cycle_data(
     params = {"limit": limit}
     if next_token:
         params["nextToken"] = next_token
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
     
     response, new_access_token, new_refresh_token = authenticated_request(
         method="GET",
@@ -309,8 +329,14 @@ def get_recovery_data(
     refresh_token: str,
     limit: int = 25,
     next_token: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> Tuple[Dict[str, object], str, str]:
     """Fetch recovery data from WHOOP API with automatic token refresh.
+    
+    Args:
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
     
     Returns:
         Tuple of (recovery_data, access_token, refresh_token) - tokens may be updated if refreshed
@@ -319,6 +345,10 @@ def get_recovery_data(
     params = {"limit": limit}
     if next_token:
         params["nextToken"] = next_token
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
     
     response, new_access_token, new_refresh_token = authenticated_request(
         method="GET",
@@ -372,7 +402,43 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fetch all pages of data (uses pagination with next_token)",
     )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        help="Start date in YYYY-MM-DD format (e.g., 2024-01-01). Returns records from the beginning of this day.",
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        help="End date in YYYY-MM-DD format (e.g., 2024-12-31). Returns records until the end of this day.",
+    )
     return parser.parse_args()
+
+
+def format_date_for_api(date_str: Optional[str], is_end: bool = False) -> Optional[str]:
+    """Format a YYYY-MM-DD date string to ISO 8601 format for WHOOP API.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format, or None
+        is_end: If True, append T23:59:59.999Z (end of day), otherwise T00:00:00.000Z (start of day)
+    
+    Returns:
+        ISO 8601 formatted date-time string, or None if input is None
+    """
+    if not date_str:
+        return None
+    
+    # If already in full ISO format, return as-is
+    if "T" in date_str:
+        return date_str
+    
+    # Append time portion based on whether it's start or end
+    if is_end:
+        return f"{date_str}T23:59:59.999Z"
+    else:
+        return f"{date_str}T00:00:00.000Z"
 
 
 def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
@@ -468,8 +534,14 @@ def _fetch_all_pages(
     access_token: str,
     refresh_token: str,
     limit: int = 25,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> Tuple[Dict[str, object], str, str]:
     """Fetch all pages of data using pagination.
+    
+    Args:
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
     
     Returns:
         Tuple of (combined_data, access_token, refresh_token) - all records combined
@@ -501,6 +573,8 @@ def _fetch_all_pages(
             refresh_token=current_refresh,
             limit=limit,
             next_token=next_token,
+            start=start,
+            end=end,
         )
         
         # Debug: print response keys to help diagnose issues
@@ -582,6 +656,8 @@ def run_get_data(
     band_id: int,
     limit: int = 25,
     fetch_all: bool = False,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> None:
     """Generic helper to fetch data from WHOOP API with automatic token refresh.
     
@@ -590,6 +666,8 @@ def run_get_data(
         band_id: Band number (1-10) to fetch data for
         limit: Maximum number of records per page
         fetch_all: If True, fetch all pages using pagination
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
     """
     token_url = DEFAULT_TOKEN_URL
     
@@ -611,7 +689,11 @@ def run_get_data(
             f"refresh_token missing for band {band_id} in secrets.json. Please run OAuth flow first."
         )
 
-    print(f"Fetching data for band {band_id}...", file=sys.stderr)
+    # Print info about the request
+    date_range_info = ""
+    if start or end:
+        date_range_info = f" (date range: {start or 'any'} to {end or 'any'})"
+    print(f"Fetching data for band {band_id}{date_range_info}...", file=sys.stderr)
 
     # Fetch data (will auto-refresh token if expired)
     if fetch_all:
@@ -623,6 +705,8 @@ def run_get_data(
             access_token=access_token,
             refresh_token=refresh_token,
             limit=limit,
+            start=start,
+            end=end,
         )
     else:
         data, new_access_token, new_refresh_token = data_fetcher(
@@ -632,6 +716,8 @@ def run_get_data(
             access_token=access_token,
             refresh_token=refresh_token,
             limit=limit,
+            start=start,
+            end=end,
         )
 
     # Update secrets if tokens were refreshed
@@ -646,12 +732,37 @@ def run_get_data(
 def main() -> None:
     args = parse_args()
 
+    # Format dates to ISO 8601 format for API
+    start_date = format_date_for_api(args.start, is_end=False)
+    end_date = format_date_for_api(args.end, is_end=True)
+
     if args.command == "get_sleep":
-        run_get_data(get_sleep_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
+        run_get_data(
+            get_sleep_data,
+            band_id=args.band,
+            limit=args.limit,
+            fetch_all=args.all,
+            start=start_date,
+            end=end_date,
+        )
     elif args.command == "get_cycle":
-        run_get_data(get_cycle_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
+        run_get_data(
+            get_cycle_data,
+            band_id=args.band,
+            limit=args.limit,
+            fetch_all=args.all,
+            start=start_date,
+            end=end_date,
+        )
     elif args.command == "get_recovery":
-        run_get_data(get_recovery_data, band_id=args.band, limit=args.limit, fetch_all=args.all)
+        run_get_data(
+            get_recovery_data,
+            band_id=args.band,
+            limit=args.limit,
+            fetch_all=args.all,
+            start=start_date,
+            end=end_date,
+        )
     else:
         # Default: run OAuth flow
         run_oauth_flow(band_id=args.band, no_browser=args.no_browser)
