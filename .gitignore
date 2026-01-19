@@ -33,4 +33,5 @@ htmlcov/
 secrets.json
 
 # Test output
-output_test.txt
+fetch_all_test.txt
+band1_sleep_20250417_20250820.txt
