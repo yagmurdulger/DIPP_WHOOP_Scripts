@@ -365,18 +365,61 @@ def get_recovery_data(
     return response.json(), new_access_token, new_refresh_token
 
 
+def get_workout_data(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    access_token: str,
+    refresh_token: str,
+    limit: int = 25,
+    next_token: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Tuple[Dict[str, object], str, str]:
+    """Fetch workout data from WHOOP API with automatic token refresh.
+    
+    Args:
+        start: ISO 8601 date-time string. Returns records after or during this time.
+        end: ISO 8601 date-time string. Returns records that ended before this time.
+    
+    Returns:
+        Tuple of (workout_data, access_token, refresh_token) - tokens may be updated if refreshed
+    """
+    url = f"{API_BASE_URL}/developer/v2/activity/workout"
+    params = {"limit": limit}
+    if next_token:
+        params["nextToken"] = next_token
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
+    
+    response, new_access_token, new_refresh_token = authenticated_request(
+        method="GET",
+        url=url,
+        token_url=token_url,
+        client_id=client_id,
+        client_secret=client_secret,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        params=params,
+    )
+    
+    return response.json(), new_access_token, new_refresh_token
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "WHOOP API OAuth and data retrieval tool. "
-            "Run OAuth flow or fetch data (sleep, cycle, recovery) from WHOOP API. "
+            "Run OAuth flow or fetch data (sleep, cycle, recovery, workout) from WHOOP API. "
             "Supports multiple bands (1-10) with separate tokens for each."
         )
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["get_sleep", "get_cycle", "get_recovery"],
+        choices=["get_sleep", "get_cycle", "get_recovery", "get_workout"],
         help="Command to execute (default: run OAuth flow)",
     )
     parser.add_argument(
@@ -783,6 +826,15 @@ def main() -> None:
     elif args.command == "get_recovery":
         run_get_data(
             get_recovery_data,
+            band_id=args.band,
+            limit=args.limit,
+            fetch_all=args.all,
+            start=start_date,
+            end=end_date,
+        )
+    elif args.command == "get_workout":
+        run_get_data(
+            get_workout_data,
             band_id=args.band,
             limit=args.limit,
             fetch_all=args.all,
