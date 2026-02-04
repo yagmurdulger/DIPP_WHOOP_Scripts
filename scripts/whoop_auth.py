@@ -526,6 +526,38 @@ def format_date_for_api(date_str: Optional[str], is_end: bool = False) -> Option
         return f"{date_str}T00:00:00.000Z"
 
 
+def filter_records_by_start_date(records: List[object], start: Optional[str]) -> List[object]:
+    """Filter records to only include those that started on or after the specified start date.
+    
+    This is a client-side filter to handle cases where the WHOOP API returns records
+    that "intersect" with the date range but actually started before the specified start date
+    (e.g., ongoing cycles with null end dates).
+    
+    Args:
+        records: List of records from WHOOP API
+        start: ISO 8601 date-time string (start of date range), or None
+    
+    Returns:
+        Filtered list of records where record["start"] >= start
+    """
+    if not start or not records:
+        return records
+    
+    filtered = []
+    for record in records:
+        if isinstance(record, dict):
+            record_start = record.get("start")
+            # Include record if it started on or after the specified start date
+            # ISO 8601 strings are lexicographically sortable
+            if record_start and record_start >= start:
+                filtered.append(record)
+        else:
+            # Non-dict records pass through unchanged
+            filtered.append(record)
+    
+    return filtered
+
+
 def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
     """Run the OAuth 2.0 authorization flow for a specific band.
     
@@ -809,6 +841,14 @@ def run_get_data(
     if new_access_token != access_token or new_refresh_token != refresh_token:
         save_band_tokens(band_id, new_access_token, new_refresh_token)
         print(f"Tokens refreshed and saved for band {band_id}", file=sys.stderr)
+
+    # Client-side filter: exclude records that started before the specified start date
+    if start and isinstance(data, dict) and "records" in data:
+        original_count = len(data["records"]) if isinstance(data["records"], list) else 0
+        data["records"] = filter_records_by_start_date(data["records"], start)
+        filtered_count = len(data["records"])
+        if filtered_count < original_count:
+            print(f"Filtered out {original_count - filtered_count} record(s) that started before {start}", file=sys.stderr)
 
     # Print data as JSON to stdout
     print(json.dumps(data, indent=2))
