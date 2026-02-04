@@ -419,16 +419,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["get_sleep", "get_cycle", "get_recovery", "get_workout"],
+        choices=["get_sleep", "get_cycle", "get_recovery", "get_workout", "check_daily_compliance"],
         help="Command to execute (default: run OAuth flow)",
     )
     parser.add_argument(
         "--band",
         type=int,
-        required=True,
         choices=range(1, NUM_BANDS + 1),
         metavar=f"{{1-{NUM_BANDS}}}",
-        help=f"Band number to authenticate or fetch data for (1-{NUM_BANDS})",
+        help=f"Band number to authenticate or fetch data for (1-{NUM_BANDS}). Required for all commands except check_daily_compliance.",
     )
     parser.add_argument(
         "--no-browser",
@@ -458,7 +457,24 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="End date in YYYY-MM-DD format (e.g., 2024-12-31). Returns records until the end of this day.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Date for compliance check in YYYY-MM-DD format (e.g., 2024-01-15). Required for check_daily_compliance.",
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate required arguments based on command
+    if args.command == "check_daily_compliance":
+        if not args.date:
+            parser.error("--date is required for check_daily_compliance command")
+    else:
+        if args.band is None:
+            parser.error("--band is required for this command")
+    
+    return args
 
 
 def validate_date_format(date_str: str) -> bool:
@@ -798,6 +814,108 @@ def run_get_data(
     print(json.dumps(data, indent=2))
 
 
+def run_daily_compliance_check(date_str: str) -> None:
+    """Check daily compliance for all bands on a specific date.
+    
+    Iterates through all 10 bands and checks if there is at least one record
+    for sleep, cycle, and recovery endpoints for the given day.
+    
+    Args:
+        date_str: Date in YYYY-MM-DD format
+    """
+    # Validate and format the date
+    if not validate_date_format(date_str):
+        raise SystemExit(
+            f"Invalid date format: '{date_str}'. Please use YYYY-MM-DD format (e.g., 2024-01-15)."
+        )
+    
+    start_date = f"{date_str}T00:00:00.000Z"
+    end_date = f"{date_str}T23:59:59.999Z"
+    
+    token_url = DEFAULT_TOKEN_URL
+    client_id, client_secret = get_client_credentials()
+    
+    if not client_id or not client_secret:
+        raise SystemExit(
+            "client_id/client_secret missing in secrets.json. Please fill them and rerun."
+        )
+    
+    # Track failures: {band_id: [list of failed endpoints]}
+    failures: Dict[str, List[str]] = {}
+    
+    # Define the endpoints to check
+    endpoints = [
+        ("sleep", get_sleep_data),
+        ("cycle", get_cycle_data),
+        ("recovery", get_recovery_data),
+    ]
+    
+    print(f"Checking daily compliance for {date_str}...", file=sys.stderr)
+    
+    for band_id in range(1, NUM_BANDS + 1):
+        access_token, refresh_token = get_band_tokens(band_id)
+        
+        if not access_token or not refresh_token:
+            # Band not authenticated - mark all endpoints as failed
+            failures[str(band_id)] = ["sleep", "cycle", "recovery"]
+            print(f"  Band {band_id}: NOT AUTHENTICATED (missing tokens)", file=sys.stderr)
+            continue
+        
+        band_failures: List[str] = []
+        current_access_token = access_token
+        current_refresh_token = refresh_token
+        
+        for endpoint_name, data_fetcher in endpoints:
+            try:
+                data, new_access_token, new_refresh_token = data_fetcher(
+                    token_url=token_url,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    access_token=current_access_token,
+                    refresh_token=current_refresh_token,
+                    limit=25,
+                    start=start_date,
+                    end=end_date,
+                )
+                
+                # Update tokens if refreshed
+                if new_access_token != current_access_token or new_refresh_token != current_refresh_token:
+                    current_access_token = new_access_token
+                    current_refresh_token = new_refresh_token
+                    save_band_tokens(band_id, new_access_token, new_refresh_token)
+                
+                # Check if there is at least one record
+                records = []
+                if isinstance(data, dict) and "records" in data:
+                    records = data["records"] if isinstance(data["records"], list) else []
+                elif isinstance(data, list):
+                    records = data
+                
+                if len(records) == 0:
+                    band_failures.append(endpoint_name)
+                    
+            except SystemExit as e:
+                # Token refresh failed or other auth error
+                print(f"  Band {band_id} {endpoint_name}: AUTH ERROR - {e}", file=sys.stderr)
+                band_failures.append(endpoint_name)
+            except Exception as e:
+                # API error or other issue
+                print(f"  Band {band_id} {endpoint_name}: ERROR - {e}", file=sys.stderr)
+                band_failures.append(endpoint_name)
+        
+        if band_failures:
+            failures[str(band_id)] = band_failures
+            print(f"  Band {band_id}: MISSING {band_failures}", file=sys.stderr)
+        else:
+            print(f"  Band {band_id}: OK", file=sys.stderr)
+    
+    # Output results
+    if not failures:
+        print("DAILY COMPLIANCE SUCCESSFUL FOR ALL BANDS")
+    else:
+        print(json.dumps(failures, indent=2))
+
+
 def main() -> None:
     args = parse_args()
 
@@ -841,6 +959,8 @@ def main() -> None:
             start=start_date,
             end=end_date,
         )
+    elif args.command == "check_daily_compliance":
+        run_daily_compliance_check(date_str=args.date)
     else:
         # Default: run OAuth flow
         run_oauth_flow(band_id=args.band, no_browser=args.no_browser)
