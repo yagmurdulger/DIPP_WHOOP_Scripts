@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 import argparse
+import csv
 import json
 import secrets
 import urllib.parse
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import os
 import sys
@@ -463,6 +464,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Date for compliance check in YYYY-MM-DD format (e.g., 2024-01-15). Required for check_daily_compliance.",
     )
+    parser.add_argument(
+        "--to_csv",
+        action="store_true",
+        help="Save output to CSV file instead of printing JSON. File saved to src/data/ folder.",
+    )
     
     args = parser.parse_args()
     
@@ -590,6 +596,94 @@ def filter_ongoing_records_before_date(records: List[object], start: str) -> Lis
             filtered.append(record)
     
     return filtered
+
+
+def flatten_dict(d: Dict[str, Any], parent_key: str = "", sep: str = "_") -> Dict[str, Any]:
+    """Flatten a nested dictionary.
+    
+    Args:
+        d: Dictionary to flatten
+        parent_key: Key prefix for nested keys
+        sep: Separator between parent and child keys
+    
+    Returns:
+        Flattened dictionary with no nested structures
+    """
+    items: List[Tuple[str, Any]] = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep).items())
+        elif isinstance(v, list):
+            # Convert lists to JSON string for CSV
+            items.append((new_key, json.dumps(v)))
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def save_records_to_csv(
+    records: List[object],
+    band_id: int,
+    endpoint_name: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> str:
+    """Save records to a CSV file.
+    
+    Args:
+        records: List of record dictionaries from WHOOP API
+        band_id: Band number (1-10)
+        endpoint_name: Name of the endpoint (sleep, cycle, recovery, workout)
+        start_date: Original start date in YYYY-MM-DD format (not ISO), or None
+        end_date: Original end date in YYYY-MM-DD format (not ISO), or None
+    
+    Returns:
+        Path to the saved CSV file
+    """
+    # Create data directory if it doesn't exist
+    data_dir = os.path.join(SRC_DIR, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # Build filename: [BAND ID]_[START DATE]_[END DATE]_[ENDPOINT NAME].csv
+    filename_parts = [str(band_id)]
+    if start_date:
+        filename_parts.append(start_date)
+    if end_date:
+        filename_parts.append(end_date)
+    filename_parts.append(endpoint_name)
+    filename = "_".join(filename_parts) + ".csv"
+    
+    filepath = os.path.join(data_dir, filename)
+    
+    if not records:
+        # Create empty CSV with just a header row
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            f.write("No records found\n")
+        return filepath
+    
+    # Flatten all records and collect all unique keys
+    flattened_records = []
+    all_keys: set = set()
+    for record in records:
+        if isinstance(record, dict):
+            flat = flatten_dict(record)
+            flattened_records.append(flat)
+            all_keys.update(flat.keys())
+        else:
+            flattened_records.append({"value": record})
+            all_keys.add("value")
+    
+    # Sort keys for consistent column order
+    fieldnames = sorted(all_keys)
+    
+    # Write CSV
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(flattened_records)
+    
+    return filepath
 
 
 def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
@@ -805,20 +899,28 @@ def _fetch_all_pages(
 def run_get_data(
     data_fetcher,
     band_id: int,
+    endpoint_name: str,
     limit: int = 25,
     fetch_all: bool = False,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    to_csv: bool = False,
+    start_date_raw: Optional[str] = None,
+    end_date_raw: Optional[str] = None,
 ) -> None:
     """Generic helper to fetch data from WHOOP API with automatic token refresh.
     
     Args:
         data_fetcher: Function that fetches data (get_sleep_data, get_cycle_data, etc.)
         band_id: Band number (1-10) to fetch data for
+        endpoint_name: Name of the endpoint (sleep, cycle, recovery, workout)
         limit: Maximum number of records per page
         fetch_all: If True, fetch all pages using pagination
         start: ISO 8601 date-time string. Returns records after or during this time.
         end: ISO 8601 date-time string. Returns records that ended before this time.
+        to_csv: If True, save output to CSV instead of printing JSON
+        start_date_raw: Original start date in YYYY-MM-DD format (for CSV filename)
+        end_date_raw: Original end date in YYYY-MM-DD format (for CSV filename)
     """
     token_url = DEFAULT_TOKEN_URL
     
@@ -884,8 +986,35 @@ def run_get_data(
         if filtered_count < original_count:
             print(f"Filtered out {original_count - filtered_count} record(s) that started before {start}", file=sys.stderr)
 
-    # Print data as JSON to stdout
-    print(json.dumps(data, indent=2))
+    # Output data
+    if to_csv:
+        # Extract records for CSV
+        records = []
+        if isinstance(data, dict) and "records" in data:
+            records = data["records"] if isinstance(data["records"], list) else []
+        elif isinstance(data, list):
+            records = data
+        
+        # Save CSV file
+        csv_filepath = save_records_to_csv(
+            records=records,
+            band_id=band_id,
+            endpoint_name=endpoint_name,
+            start_date=start_date_raw,
+            end_date=end_date_raw,
+        )
+        
+        # Save JSON file with the same base name
+        json_filepath = csv_filepath.replace(".csv", ".json")
+        with open(json_filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        
+        print(f"Saved {len(records)} record(s) to:", file=sys.stderr)
+        print(f"  CSV:  {csv_filepath}", file=sys.stderr)
+        print(f"  JSON: {json_filepath}", file=sys.stderr)
+    else:
+        # Print data as JSON to stdout
+        print(json.dumps(data, indent=2))
 
 
 def run_daily_compliance_check(date_str: str) -> None:
@@ -1004,37 +1133,53 @@ def main() -> None:
         run_get_data(
             get_sleep_data,
             band_id=args.band,
+            endpoint_name="sleep",
             limit=args.limit,
             fetch_all=args.all,
             start=start_date,
             end=end_date,
+            to_csv=args.to_csv,
+            start_date_raw=args.start,
+            end_date_raw=args.end,
         )
     elif args.command == "get_cycle":
         run_get_data(
             get_cycle_data,
             band_id=args.band,
+            endpoint_name="cycle",
             limit=args.limit,
             fetch_all=args.all,
             start=start_date,
             end=end_date,
+            to_csv=args.to_csv,
+            start_date_raw=args.start,
+            end_date_raw=args.end,
         )
     elif args.command == "get_recovery":
         run_get_data(
             get_recovery_data,
             band_id=args.band,
+            endpoint_name="recovery",
             limit=args.limit,
             fetch_all=args.all,
             start=start_date,
             end=end_date,
+            to_csv=args.to_csv,
+            start_date_raw=args.start,
+            end_date_raw=args.end,
         )
     elif args.command == "get_workout":
         run_get_data(
             get_workout_data,
             band_id=args.band,
+            endpoint_name="workout",
             limit=args.limit,
             fetch_all=args.all,
             start=start_date,
             end=end_date,
+            to_csv=args.to_csv,
+            start_date_raw=args.start,
+            end_date_raw=args.end,
         )
     elif args.command == "check_daily_compliance":
         run_daily_compliance_check(date_str=args.date)

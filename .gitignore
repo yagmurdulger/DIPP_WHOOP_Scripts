@@ -32,6 +32,9 @@ htmlcov/
 # Secrets
 secrets.json
 
+# User data
+src/data/
+
 # Test output
 fetch_all_test.txt
 band1_sleep_20250417_20250820.txt

@@ -200,6 +200,38 @@ python scripts/whoop_auth.py get_sleep --band 1 --start 2024-07-15 --end 2024-07
 python scripts/whoop_auth.py get_sleep --band 1 --all --limit 25 --start 2024-01-01 --end 2024-06-30
 ```
 
+### Saving to CSV
+
+Use `--to_csv` to save the output to files instead of printing to stdout. Both CSV and JSON files are saved to `src/data/`.
+
+```bash
+# Save sleep data to CSV and JSON
+python scripts/whoop_auth.py get_sleep --band 1 --to_csv
+
+# Save all sleep data with date range
+python scripts/whoop_auth.py get_sleep --band 1 --all --start 2024-01-01 --end 2024-12-31 --to_csv
+
+# Save workout data
+python scripts/whoop_auth.py get_workout --band 2 --all --to_csv
+```
+
+**File naming format:** `[BAND_ID]_[START_DATE]_[END_DATE]_[ENDPOINT].csv` and `.json`
+
+Examples:
+- `1_sleep.csv` / `1_sleep.json` - Band 1 sleep data, no date range
+- `1_2024-01-01_sleep.csv` - Band 1 sleep data with start date only
+- `1_2024-01-01_2024-12-31_sleep.csv` - Band 1 sleep data with full date range
+- `2_workout.csv` - Band 2 workout data
+
+**Output:**
+```
+Saved 25 record(s) to:
+  CSV:  /path/to/src/data/1_2024-01-01_2024-12-31_sleep.csv
+  JSON: /path/to/src/data/1_2024-01-01_2024-12-31_sleep.json
+```
+
+**Note:** Nested JSON fields are flattened in the CSV (e.g., `score.strain` becomes `score_strain`).
+
 ### Daily Compliance Check
 
 Check if all 10 bands have data for a specific day across sleep, cycle, and recovery endpoints:
@@ -240,5 +272,6 @@ This means band 3 is missing sleep and recovery data, and band 7 is missing cycl
 - `--start YYYY-MM-DD`: Start date for filtering (returns records from beginning of this day)
 - `--end YYYY-MM-DD`: End date for filtering (returns records until end of this day)
 - `--date YYYY-MM-DD`: Date for compliance check (required for `check_daily_compliance`)
+- `--to_csv`: Save output to CSV and JSON files in `src/data/` instead of printing to stdout
 
 The script will open a browser window to WHOOP's authorization screen, receive the redirect locally, verify the state, and print a JSON object containing `access_token`, `refresh_token`, `expires_in`, and `token_type`. It will save tokens to the appropriate band entry in `secrets.json` automatically.
