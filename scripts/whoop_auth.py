@@ -558,6 +558,40 @@ def filter_records_by_start_date(records: List[object], start: Optional[str]) ->
     return filtered
 
 
+def filter_ongoing_records_before_date(records: List[object], start: str) -> List[object]:
+    """Filter out ongoing records (null end date) that started before the specified start date.
+    
+    For daily compliance checks, we don't want to count records that:
+    1. Started before the compliance check date, AND
+    2. Are still ongoing (have null end date)
+    
+    Args:
+        records: List of records from WHOOP API
+        start: ISO 8601 date-time string (start of compliance date)
+    
+    Returns:
+        Filtered list excluding ongoing records that started before the date
+    """
+    if not records:
+        return records
+    
+    filtered = []
+    for record in records:
+        if isinstance(record, dict):
+            record_start = record.get("start")
+            record_end = record.get("end")
+            
+            # Exclude records that started before the date AND have null end (ongoing)
+            if record_start and record_start < start and record_end is None:
+                continue  # Skip this record
+            
+            filtered.append(record)
+        else:
+            filtered.append(record)
+    
+    return filtered
+
+
 def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
     """Run the OAuth 2.0 authorization flow for a specific band.
     
@@ -924,12 +958,15 @@ def run_daily_compliance_check(date_str: str) -> None:
                     current_refresh_token = new_refresh_token
                     save_band_tokens(band_id, new_access_token, new_refresh_token)
                 
-                # Check if there is at least one record
+                # Check if there is at least one valid record
                 records = []
                 if isinstance(data, dict) and "records" in data:
                     records = data["records"] if isinstance(data["records"], list) else []
                 elif isinstance(data, list):
                     records = data
+                
+                # Filter out ongoing records that started before the compliance date
+                records = filter_ongoing_records_before_date(records, start_date)
                 
                 if len(records) == 0:
                     band_failures.append(endpoint_name)

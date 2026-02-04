@@ -85,7 +85,7 @@ DIPP_WHOOP_Scripts/
 
 ## WHOOP OAuth Helper
 
-This project includes a CLI to run a local OAuth 2.0 authorization flow for WHOOP and exchange the authorization code for tokens. References: [WHOOP OAuth 2.0 docs](https://developer.whoop.com/docs/developing/oauth), [Passport tutorial](https://developer.whoop.com/docs/tutorials/access-token-passport).
+This project includes a CLI to run a local OAuth 2.0 authorization flow for WHOOP and exchange the authorization code for tokens. It also supports fetching data (sleep, cycle, recovery, workout) and checking daily compliance across all bands. References: [WHOOP OAuth 2.0 docs](https://developer.whoop.com/docs/developing/oauth), [Passport tutorial](https://developer.whoop.com/docs/tutorials/access-token-passport).
 
 ### Multi-Band Support
 
@@ -157,6 +157,13 @@ python scripts/whoop_auth.py get_recovery --band 3
 python scripts/whoop_auth.py get_recovery --band 3 --all
 ```
 
+**Fetch workout data for a band:**
+```bash
+python scripts/whoop_auth.py get_workout --band 1
+python scripts/whoop_auth.py get_workout --band 1 --all
+python scripts/whoop_auth.py get_workout --band 1 --start 2024-01-01 --end 2024-12-31
+```
+
 ### Date Range Filtering
 
 You can filter data by date range using `--start` and `--end` arguments. Simply provide dates in `YYYY-MM-DD` format.
@@ -165,6 +172,11 @@ You can filter data by date range using `--start` and `--end` arguments. Simply 
 - `--end`: Returns records until the **end** of this day (23:59:59)
 
 Both arguments are optional and can be used independently or together.
+
+**Note:** The WHOOP API may return records that "intersect" with the date range but actually started before your specified start date (e.g., ongoing cycles). The script applies **client-side filtering** to exclude records where the `start` field is before your specified `--start` date. If any records are filtered out, you'll see a message like:
+```
+Filtered out 1 record(s) that started before 2024-01-01T00:00:00.000Z
+```
 
 **Examples:**
 
@@ -188,13 +200,45 @@ python scripts/whoop_auth.py get_sleep --band 1 --start 2024-07-15 --end 2024-07
 python scripts/whoop_auth.py get_sleep --band 1 --all --limit 25 --start 2024-01-01 --end 2024-06-30
 ```
 
+### Daily Compliance Check
+
+Check if all 10 bands have data for a specific day across sleep, cycle, and recovery endpoints:
+
+```bash
+python scripts/whoop_auth.py check_daily_compliance --date 2024-01-15
+```
+
+**How it works:**
+- Iterates through all 10 bands
+- For each band, checks sleep, cycle, and recovery endpoints for the specified date
+- Reports which bands are missing data
+
+**Output:**
+
+✅ If all bands have at least one record for all three endpoints:
+```
+DAILY COMPLIANCE SUCCESSFUL FOR ALL BANDS
+```
+
+❌ If some bands are missing data, outputs JSON showing which endpoints failed:
+```json
+{
+  "3": ["sleep", "recovery"],
+  "7": ["cycle"]
+}
+```
+This means band 3 is missing sleep and recovery data, and band 7 is missing cycle data.
+
+**Filtering behavior:** The compliance check excludes records that started **before** the specified date AND have a `null` end date (ongoing/incomplete records). This ensures only records that actually started or ended on the compliance date are counted.
+
 ### Options
 
-- `--band {1-10}`: **(Required)** Band number to authenticate or fetch data for
+- `--band {1-10}`: Band number to authenticate or fetch data for (required for all commands except `check_daily_compliance`)
 - `--no-browser`: Don't auto-open browser; print URL instead (OAuth flow only)
 - `--limit N`: Maximum records per page (default: 25, max: 25)
 - `--all`: Fetch all pages of data using pagination
 - `--start YYYY-MM-DD`: Start date for filtering (returns records from beginning of this day)
 - `--end YYYY-MM-DD`: End date for filtering (returns records until end of this day)
+- `--date YYYY-MM-DD`: Date for compliance check (required for `check_daily_compliance`)
 
 The script will open a browser window to WHOOP's authorization screen, receive the redirect locally, verify the state, and print a JSON object containing `access_token`, `refresh_token`, `expires_in`, and `token_type`. It will save tokens to the appropriate band entry in `secrets.json` automatically.
