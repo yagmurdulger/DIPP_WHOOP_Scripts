@@ -712,7 +712,8 @@ def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
             "REDIRECT_URI must include a hostname and port, e.g. http://localhost:8765/callback"
         )
 
-    state = secrets.token_urlsafe(16)
+    # WHOOP requires the state parameter to be exactly 8 characters
+    state = secrets.token_urlsafe(6)[:8]
 
     server, redirect_uri = start_local_server(parsed_redirect.hostname, parsed_redirect.port)
 
@@ -731,14 +732,22 @@ def run_oauth_flow(band_id: int, no_browser: bool = False) -> None:
         webbrowser.open(auth_url, new=2)
 
     try:
-        # Handle a single request (the OAuth redirect)
+        # Wait up to 120 seconds for the OAuth redirect callback
+        server.timeout = 120
         server.handle_request()
     finally:
         server.server_close()
 
     result: Optional[Dict[str, Optional[str]]] = getattr(server, "auth_result", None)  # type: ignore[attr-defined]
     if not result:
-        raise SystemExit("No authorization response was received.")
+        raise SystemExit(
+            "No authorization response received within 120 seconds.\n"
+            "This usually means WHOOP did not redirect back to your callback.\n"
+            "Troubleshooting:\n"
+            "  1. Verify your app is still active in the WHOOP Developer Dashboard\n"
+            "  2. Confirm the redirect URI 'http://localhost:8765/callback' is registered\n"
+            "  3. Check that your client_id and client_secret are still valid"
+        )
 
     if result.get("error"):
         raise SystemExit(f"Authorization failed: {result['error']}")
